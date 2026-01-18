@@ -29,7 +29,16 @@ import argparse
 from pathlib import Path
 
 # Windows 콘솔 인코딩 설정 (CLI 환경에서만)
-def _setup_console_encoding():
+def _setup_console_encoding(is_gui=False):
+    """
+    Windows 콘솔 인코딩 설정
+
+    Args:
+        is_gui: GUI 모드 여부 (True면 인코딩 설정 스킵)
+    """
+    if is_gui:
+        return  # GUI는 인코딩 설정 불필요
+
     if sys.platform == 'win32':
         try:
             if hasattr(sys.stdout, 'buffer') and sys.stdout.buffer and not sys.stdout.closed:
@@ -41,7 +50,6 @@ def _setup_console_encoding():
 
 
 def main():
-    _setup_console_encoding()  # CLI 환경에서만 인코딩 설정
     """메인 함수"""
     parser = argparse.ArgumentParser(
         description="파일 정리 도구 - 중복 제거, 버전 관리, 주제별 분류",
@@ -101,6 +109,11 @@ def main():
         help="실제 실행 (기본은 드라이 런)"
     )
     parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="확인 없이 실행"
+    )
+    parser.add_argument(
         "--archive",
         type=str,
         default=None,
@@ -120,6 +133,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # GUI 모드 체크 (인코딩 설정 전에)
+    is_gui = args.gui if hasattr(args, 'gui') else False
+
+    # 인코딩 설정 (GUI가 아닐 때만)
+    _setup_console_encoding(is_gui=is_gui)
 
     # 기본 대상 폴더
     if args.target is None:
@@ -153,6 +172,8 @@ def main():
         sys.argv = ['cleanup_empty', str(target_dir)]
         if args.execute:
             sys.argv.append('--execute')
+        if args.yes:
+            sys.argv.append('-y')
         if args.exclude:
             sys.argv.extend(['--exclude'] + args.exclude)
         cleanup_main()
@@ -188,7 +209,7 @@ def main():
         dry_run=True
     )
 
-    if args.execute:
+    if args.execute and not args.yes:
         print("\n" + "!" * 60)
         print("  주의: 실제 실행 모드입니다!")
         print("!" * 60)

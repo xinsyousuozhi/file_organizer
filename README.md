@@ -6,7 +6,10 @@
 
 1. **중복 파일 처리** - SHA256 해싱 기반 정확한 중복 탐지
 2. **버전 파일 그룹화** - 유사한 파일명(v1, v2, 최종, final 등) 그룹화
-3. **주제별 분류** - 문서/이미지 파일을 키워드 기반으로 분류
+3. **스마트 파일 분류** - 3가지 분류 모드 지원
+   - 🚀 **확장자 기반**: 빠른 정리 (대량 파일)
+   - 🤖 **LLM 자동**: 내용 분석 (50개 이하 파일)
+   - 🎯 **Claude Code**: 실시간 협업 분류 ⭐ **추천** ([가이드](./CLAUDE_CODE_MODE.md))
 4. **날짜별 정리** - 연도/월별 폴더 자동 생성
 5. **빈 폴더 정리** - 파일 이동 후 남은 빈 폴더 삭제
 6. **파일 정리 미리보기** - 실행 전 파일이 어떻게 재배치될지 확인
@@ -175,11 +178,269 @@ finally:
 - JSON 로그 파일로 복원 가능
 - 파일은 영구 삭제되지 않고 아카이브 폴더로 이동됩니다
 
+## 🎯 파일 분류 모드 선택 가이드
+
+### 언제 어떤 모드를 사용할까?
+
+| 상황 | 추천 모드 | 이유 |
+|------|-----------|------|
+| 단순히 확장자별로만 정리 | 🚀 확장자 기반 | 가장 빠름 |
+| 50개 이하 파일 자동 분류 | 🤖 LLM 자동 | 간편하고 정확함 |
+| 50개 이상 파일 분류 | 🎯 **Claude Code** | 빠르고 정확함 |
+| 복잡한 분류 규칙 필요 | 🎯 **Claude Code** | 유연한 맞춤 분류 |
+| 프로젝트별 정리 | 🎯 **Claude Code** | 컨텍스트 이해 |
+
+### 📖 자세한 가이드
+
+- **Claude Code 사용법**: [CLAUDE_CODE_MODE.md](./CLAUDE_CODE_MODE.md)
+- **LLM 설정**: 아래 "LLM 설정 가이드" 섹션 참고
+- **성능 최적화**: 아래 "성능 최적화 가이드" 섹션 참고
+
 ## 주의사항
 
 1. **첫 실행은 반드시 드라이 런 모드로** - `--execute` 없이 실행하여 미리보기
 2. **제외 폴더 확인** - 중요한 프로젝트 폴더는 제외 목록에 추가
 3. **백업 권장** - 중요한 파일은 미리 백업
+4. **대량 파일 분류**: 50개 이상 파일은 Claude Code 사용 권장
+
+---
+
+## LLM 설정 가이드
+
+### 지원하는 LLM 제공자
+
+#### 1. Claude (Anthropic)
+```python
+from src.llm_classifier import LLMConfig
+
+llm_config = LLMConfig(
+    provider="claude",
+    api_key="sk-ant-api03-...",  # 또는 환경변수 ANTHROPIC_API_KEY
+    model="claude-3-5-sonnet-20241022",
+    temperature=0.3,
+    max_tokens=500
+)
+```
+
+#### 2. OpenAI GPT
+```python
+llm_config = LLMConfig(
+    provider="openai",
+    api_key="sk-...",  # 또는 환경변수 OPENAI_API_KEY
+    model="gpt-4o-mini",
+    temperature=0.3,
+    max_tokens=500
+)
+```
+
+#### 3. Google Gemini
+```python
+llm_config = LLMConfig(
+    provider="gemini",
+    api_key="AIza...",  # 또는 환경변수 GOOGLE_API_KEY
+    model="gemini-1.5-flash",
+    temperature=0.3,
+    max_tokens=500
+)
+```
+
+#### 4. Ollama (로컬 LLM)
+```python
+llm_config = LLMConfig(
+    provider="ollama",
+    model="llama3.2",
+    base_url="http://localhost:11434",
+    temperature=0.3,
+    max_tokens=500
+)
+```
+
+#### 5. 키워드 기반 분류 (LLM 없이)
+```python
+llm_config = LLMConfig(provider="none")
+# 또는
+llm_config = None
+```
+
+### 환경변수로 API 키 설정 (권장)
+
+#### Windows (PowerShell)
+```powershell
+# 현재 세션
+$env:ANTHROPIC_API_KEY="sk-ant-api03-..."
+$env:OPENAI_API_KEY="sk-..."
+$env:GOOGLE_API_KEY="AIza..."
+
+# 영구 설정
+[System.Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-api03-...", "User")
+```
+
+#### Linux/Mac
+```bash
+# ~/.bashrc 또는 ~/.zshrc에 추가
+export ANTHROPIC_API_KEY="sk-ant-api03-..."
+export OPENAI_API_KEY="sk-..."
+export GOOGLE_API_KEY="AIza..."
+```
+
+### 필요한 패키지 설치
+
+```bash
+# Claude
+pip install anthropic
+
+# OpenAI
+pip install openai
+
+# Gemini
+pip install google-generativeai
+
+# Ollama (별도 설치 필요)
+# https://ollama.ai/download
+```
+
+### 추천 설정
+
+#### 높은 정확도가 필요한 경우
+```python
+llm_config = LLMConfig(
+    provider="claude",
+    model="claude-3-5-sonnet-20241022",
+    temperature=0.2  # 더 일관된 결과
+)
+```
+
+#### 빠른 처리가 필요한 경우
+```python
+llm_config = LLMConfig(
+    provider="gemini",
+    model="gemini-1.5-flash",
+    temperature=0.3
+)
+```
+
+#### 비용 절감 (로컬)
+```python
+llm_config = LLMConfig(
+    provider="ollama",
+    model="llama3.2",
+    temperature=0.3
+)
+```
+
+---
+
+## 성능 최적화 가이드
+
+### 느려지는 주요 원인과 해결책
+
+#### 🐌 LLM 분류 사용 시
+**증상**: 파일 분류 단계에서 매우 느림 (파일당 1-5초)
+
+**원인**: 각 파일마다 LLM API 호출
+
+**해결책**:
+1. **LLM 비활성화**
+   - GUI → 🤖 LLM 설정 → "none (키워드 기반)" 선택
+   - 10-100배 빠름
+
+2. **빠른 LLM 모델 사용**
+   - Gemini Flash: `gemini-1.5-flash`
+   - Ollama 로컬: `llama3.2` (빠르고 무료)
+
+3. **분류 파일 수 제한**
+   - 50개 이상 파일은 자동으로 키워드 기반으로 전환
+   - 특정 확장자만 분류
+   - 제외 폴더 활용
+
+### ⚡ 성능 비교
+
+| 작업 | LLM 사용 | 키워드 기반 | 속도 차이 |
+|------|---------|------------|-----------|
+| 파일 100개 분류 | 5-10분 | 1-5초 | 100배 |
+| 중복 파일 탐지 | 동일 | 동일 | 차이 없음 |
+| 파일 스캔 | 동일 | 동일 | 차이 없음 |
+
+### 💡 추천 설정
+
+#### 빠른 정리 (일상적 사용)
+```
+LLM: none (키워드 기반)
+분류: ✓
+중복 처리: ✓
+```
+→ **100개 파일: 5초**
+
+#### 정확한 분류 (가끔)
+```
+LLM: gemini-1.5-flash
+분류: ✓
+중복 처리: ✓
+```
+→ **100개 파일: 2-3분**
+
+#### 최고 정확도 (중요 정리)
+```
+LLM: claude-3-5-sonnet-20241022
+분류: ✓
+중복 처리: ✓
+```
+→ **100개 파일: 5-10분**
+
+### 🔧 최적화 팁
+
+1. **제외 폴더 설정**
+   - node_modules, .git 등 불필요한 폴더 제외
+   - 대용량 폴더 제외
+
+2. **파일 수 줄이기**
+   - 특정 폴더만 선택
+   - 작은 폴더부터 테스트
+
+3. **파일 수 제한**
+   - LLM 분류는 50개 이하로 자동 제한
+   - 초과 시 키워드 기반으로 자동 전환
+
+### ⚠️ 현재 제한사항
+
+- LLM 분류는 순차 처리 (파일 하나씩)
+- 텍스트 파일만 LLM 사용 (5MB 이하)
+- 이미지, 비디오는 키워드 기반
+
+### 📊 실시간 로그 확인
+
+실행 중 로그를 보면 어느 단계가 느린지 확인 가능:
+```
+[1단계] 파일 스캔...         # 빠름 (수 초)
+[2단계] 중복 파일 탐지...     # 보통 (1-30초)
+[3단계] 버전 파일 탐지...     # 빠름 (수 초)
+[4단계] 문서/이미지 분류...   # 느림 (LLM 사용 시)
+  📡 LLM 분류 활성화: ollama
+  ⚠️ LLM 분류는 시간이 오래 걸릴 수 있습니다...
+```
+
+### 🚀 빠른 진단
+
+**느린 경우**:
+1. LLM 설정 확인 → "none"으로 변경
+2. 제외 폴더 확인 → 대용량 폴더 제외
+3. 대상 폴더 크기 확인 → 작은 폴더로 테스트
+
+**정상 속도**:
+- 1000개 파일: 10-30초 (키워드 기반)
+- 100개 파일: 1-5초 (키워드 기반)
+
+### LLM 제공자별 성능 비교
+
+| 제공자 | 속도 | 정확도 | 비용 | 오프라인 |
+|--------|------|--------|------|----------|
+| Claude | 빠름 | 매우 높음 | 중간 | ✗ |
+| OpenAI | 빠름 | 높음 | 중간 | ✗ |
+| Gemini | 매우 빠름 | 높음 | 낮음 | ✗ |
+| Ollama | 중간 | 중간 | 무료 | ✓ |
+| 키워드 | 매우 빠름 | 낮음 | 무료 | ✓ |
+
+---
 
 ## 라이센스
 

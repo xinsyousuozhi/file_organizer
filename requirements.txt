@@ -1,8 +1,22 @@
 # 파일 정리 도구 의존성
 # ========================
 
-# 선택적 의존성 (휴지통 기능)
-send2trash>=1.8.0
+# 기본 의존성
+send2trash>=1.8.0  # 휴지통 기능
+PyYAML>=6.0  # 설정 파일 지원
+PyPDF2>=3.0.0  # PDF 메타데이터 추출 (논문 분류용)
+ssdeep>=3.4  # 퍼지 해싱 (유사 파일 탐지용)
+
+# LLM 분류 의존성 (선택적)
+# 원하는 LLM 제공자만 설치하세요
+# Claude
+# anthropic>=0.34.0
+# OpenAI
+# openai>=1.0.0
+# Gemini
+# google-generativeai>=0.3.0
+# Ollama (로컬 LLM용 requests만 필요)
+# requests>=2.31.0
 
 # 개발 및 테스트용 (선택적)
 # pytest>=7.0.0

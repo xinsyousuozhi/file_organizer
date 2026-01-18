@@ -1,0 +1,78 @@
+# 파일 정리 도구 설정 예시
+# 이 파일을 config.yaml로 복사하여 사용하세요
+
+# 대상 폴더 (여러 개 가능)
+target_directories:
+  - ~/Downloads
+  - ~/Documents/Unsorted
+
+# 정리된 파일 저장 위치
+archive_base: ~/_OrganizedFiles
+
+# 제외할 폴더
+excluded_folders:
+  - .git
+  - node_modules
+  - __pycache__
+  - .venv
+  - my_important_project  # 사용자 정의
+
+# 제외할 파일 패턴
+excluded_patterns:
+  - "*.tmp"
+  - "*.temp"
+  - "~*"
+  - "desktop.ini"
+
+# LLM 설정
+llm:
+  enabled: false  # LLM 사용 여부
+  provider: none  # none, claude, openai, gemini, ollama
+  model: null     # 모델명 (예: claude-3-5-sonnet-20241022)
+  api_key: null   # API 키 (또는 환경변수 사용)
+  max_file_size: 5242880  # 5MB
+  content_preview_length: 2000
+  batch_size_limit: 50
+
+# 분류 옵션
+classification:
+  by_content: true    # 내용 기반 분류
+  by_date: true       # 날짜별 분류
+  include_year: true  # 연도 폴더 생성
+  include_month: false # 월 폴더 생성
+
+# 중복 파일 처리
+duplicates:
+  enabled: true
+  keep_strategy: newest  # newest, oldest, largest, smallest
+
+# 버전 파일 처리
+versions:
+  enabled: false  # 버전 파일 정리 (보고서만 생성)
+
+# 빈 폴더 정리
+cleanup_empty_folders: true
+
+# 안전 모드
+dry_run: true  # true면 미리보기만, false면 실제 실행
+use_recycle_bin: false  # 휴지통 사용 여부
+
+# 맞춤 카테고리 (기본 카테고리에 추가됨)
+custom_categories:
+  연구자료:
+    - 논문
+    - 연구
+    - research
+    - paper
+  강의자료:
+    - 강의
+    - 수업
+    - lecture
+    - course
+
+# 논문 PDF 처리
+papers:
+  enabled: false  # 논문 자동 분류 활성화
+  classify_by: topic  # topic (주제별) 또는 author (저자별)
+  rename_files: false  # 논문 제목으로 파일명 변경
+  extract_metadata: true  # 메타데이터 추출

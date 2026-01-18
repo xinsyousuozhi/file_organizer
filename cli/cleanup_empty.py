@@ -239,6 +239,11 @@ def main():
         action="store_true",
         help="하위 폴더 검색 안 함"
     )
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="확인 없이 실행"
+    )
 
     args = parser.parse_args()
 
@@ -252,7 +257,7 @@ def main():
     exclude.update(args.exclude)
 
     # 실행 확인
-    if args.execute:
+    if args.execute and not args.yes:
         confirm = input("\n빈 폴더를 실제로 삭제하시겠습니까? (yes 입력): ").strip()
         if confirm.lower() != "yes":
             print("취소되었습니다.")

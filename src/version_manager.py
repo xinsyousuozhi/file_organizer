@@ -13,6 +13,12 @@ from datetime import datetime
 from .config import OrganizerConfig
 from .duplicate_finder import FileInfo
 
+try:
+    import ssdeep
+    SSDEEP_AVAILABLE = True
+except ImportError:
+    SSDEEP_AVAILABLE = False
+
 
 @dataclass
 class VersionGroup:
@@ -78,6 +84,7 @@ class VersionManager:
 
     def __init__(self, config: OrganizerConfig):
         self.config = config
+        self._fuzzy_hash_cache: Dict[Path, str] = {}
 
     def _extract_base_name(self, filename: str) -> str:
         """
@@ -177,9 +184,52 @@ class VersionManager:
 
         return info
 
+    def _calculate_fuzzy_hash(self, file_path: Path) -> Optional[str]:
+        """
+        파일의 ssdeep 퍼지 해시 계산
+
+        Args:
+            file_path: 파일 경로
+
+        Returns:
+            ssdeep 해시 문자열 또는 None (오류 시)
+        """
+        if not SSDEEP_AVAILABLE:
+            return None
+
+        # 캐시 확인
+        if file_path in self._fuzzy_hash_cache:
+            return self._fuzzy_hash_cache[file_path]
+
+        try:
+            fuzzy_hash = ssdeep.hash_from_file(str(file_path))
+            self._fuzzy_hash_cache[file_path] = fuzzy_hash
+            return fuzzy_hash
+        except (IOError, OSError, PermissionError):
+            return None
+
+    def _calculate_fuzzy_similarity(self, hash1: str, hash2: str) -> int:
+        """
+        두 ssdeep 해시 간 유사도 계산
+
+        Args:
+            hash1: 첫 번째 ssdeep 해시
+            hash2: 두 번째 ssdeep 해시
+
+        Returns:
+            유사도 점수 (0-100)
+        """
+        if not SSDEEP_AVAILABLE or not hash1 or not hash2:
+            return 0
+
+        try:
+            return ssdeep.compare(hash1, hash2)
+        except Exception:
+            return 0
+
     def find_version_groups(self, files: List[FileInfo]) -> List[VersionGroup]:
         """
-        파일 목록에서 버전 그룹 탐지
+        파일 목록에서 버전 그룹 탐지 (파일명 유사도 + 내용 유사도 기반)
 
         Args:
             files: FileInfo 리스트
@@ -196,7 +246,7 @@ class VersionManager:
         all_groups: List[VersionGroup] = []
 
         for ext, ext_files in by_extension.items():
-            # 각 확장자 내에서 기본 이름으로 그룹화
+            # 1단계: 파일명 유사도 기반 그룹화
             base_name_groups: Dict[str, List[FileInfo]] = defaultdict(list)
 
             for file_info in ext_files:
@@ -213,10 +263,88 @@ class VersionManager:
                     group.sort_by_date(newest_first=True)
                     all_groups.append(group)
 
+            # 2단계: 내용 유사도 기반 그룹화 (ssdeep 사용)
+            if SSDEEP_AVAILABLE:
+                content_groups = self._find_content_similar_groups(ext_files)
+                all_groups.extend(content_groups)
+
         # 추가: 유사도 기반 그룹 병합 시도
         all_groups = self._merge_similar_groups(all_groups)
 
         return all_groups
+
+    def _find_content_similar_groups(self, files: List[FileInfo]) -> List[VersionGroup]:
+        """
+        내용 유사도 기반 버전 그룹 탐지 (ssdeep 퍼지 해싱)
+
+        Args:
+            files: 같은 확장자의 파일 목록
+
+        Returns:
+            내용이 유사한 파일들의 버전 그룹 리스트
+        """
+        if not SSDEEP_AVAILABLE or len(files) < 2:
+            return []
+
+        # 퍼지 해시 계산
+        file_hashes: List[Tuple[FileInfo, str]] = []
+        for file_info in files:
+            fuzzy_hash = self._calculate_fuzzy_hash(file_info.path)
+            if fuzzy_hash:
+                file_hashes.append((file_info, fuzzy_hash))
+
+        if len(file_hashes) < 2:
+            return []
+
+        # 내용 유사도 기반 그룹화
+        content_groups: List[VersionGroup] = []
+        used_indices = set()
+
+        # 유사도 임계값 (설정 가능, 기본 75% 유사도)
+        similarity_threshold = getattr(
+            self.config,
+            'content_similarity_threshold',
+            75
+        )
+
+        for i, (file1, hash1) in enumerate(file_hashes):
+            if i in used_indices:
+                continue
+
+            # 새 그룹 생성
+            similar_files = [file1]
+            used_indices.add(i)
+
+            # 다른 파일들과 비교
+            for j, (file2, hash2) in enumerate(file_hashes):
+                if j <= i or j in used_indices:
+                    continue
+
+                similarity = self._calculate_fuzzy_similarity(hash1, hash2)
+
+                # 유사도가 임계값 이상이면 같은 그룹
+                if similarity >= similarity_threshold:
+                    similar_files.append(file2)
+                    used_indices.add(j)
+
+            # 2개 이상 유사 파일이 있으면 버전 그룹 생성
+            if len(similar_files) > 1:
+                # 기본 이름은 가장 최신 파일의 이름 사용
+                latest_file = max(similar_files, key=lambda f: f.modified_time)
+                base_name = self._extract_base_name(latest_file.path.stem)
+
+                group = VersionGroup(
+                    base_name=f"{base_name}_content_similar",
+                    extension=latest_file.path.suffix.lower()
+                )
+
+                for f in similar_files:
+                    group.add_file(f)
+
+                group.sort_by_date(newest_first=True)
+                content_groups.append(group)
+
+        return content_groups
 
     def _merge_similar_groups(self, groups: List[VersionGroup]) -> List[VersionGroup]:
         """

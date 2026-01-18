@@ -21,11 +21,12 @@ class FileOrganizer:
     중복 파일 제거, 버전 관리, 지능형 분류 기능을 통합 제공
     """
 
-    def __init__(self, config: OrganizerConfig = None, logger: FileOrganizerLogger = None):
+    def __init__(self, config: OrganizerConfig = None, logger: FileOrganizerLogger = None, llm_config=None):
         """
         Args:
             config: 설정 객체 (None이면 기본 설정 사용)
             logger: 로거 객체 (None이면 자동 생성)
+            llm_config: LLM 설정 객체 (None이면 LLM 사용 안 함)
         """
         self.config = config or OrganizerConfig()
         self.logger = logger or create_session_logger(self.config.archive_base / "logs")
@@ -33,7 +34,7 @@ class FileOrganizer:
         # 모듈 초기화
         self.duplicate_finder = DuplicateFinder(self.config)
         self.version_manager = VersionManager(self.config)
-        self.classifier = FileClassifier(self.config)
+        self.classifier = FileClassifier(self.config, llm_config=llm_config)
         self.file_mover = FileMover(self.config, self.logger)
 
         # 스캔된 파일 캐시
@@ -135,7 +136,9 @@ class FileOrganizer:
 
     def classify_files(self, files: List[FileInfo] = None,
                        by_content: bool = True,
-                       by_date: bool = True) -> List[ClassificationResult]:
+                       by_date: bool = True,
+                       exclude_duplicates: bool = True,
+                       keep_strategy: str = "newest") -> List[ClassificationResult]:
         """
         파일 분류
 
@@ -143,6 +146,8 @@ class FileOrganizer:
             files: 분류할 파일 리스트 (None이면 스캔된 파일 사용)
             by_content: 내용 기반 분류 여부
             by_date: 날짜 기반 분류 여부
+            exclude_duplicates: 중복 파일 제외 여부 (보존 대상만 포함)
+            keep_strategy: 중복 보존 전략 ('newest', 'oldest', 'largest', 'smallest')
 
         Returns:
             ClassificationResult 리스트
@@ -151,6 +156,30 @@ class FileOrganizer:
             if not self._scanned_files:
                 self.scan_directories()
             files = self._scanned_files
+
+        # 중복 파일 제외 처리: 중복 그룹에서 제외 대상 파일만 분류에서 제외
+        if exclude_duplicates and self._duplicates:
+            # 그룹별로 제외할 파일만 선택
+            exclude_paths = set()
+
+            for group in self._duplicates:
+                files_sorted = group.files
+                if keep_strategy == "newest":
+                    files_sorted = sorted(group.files, key=lambda f: f.modified_time, reverse=True)
+                elif keep_strategy == "oldest":
+                    files_sorted = sorted(group.files, key=lambda f: f.modified_time)
+                elif keep_strategy == "largest":
+                    files_sorted = sorted(group.files, key=lambda f: f.size, reverse=True)
+                elif keep_strategy == "smallest":
+                    files_sorted = sorted(group.files, key=lambda f: f.size)
+
+                # 첫 번째 파일은 보존, 나머지는 제외
+                if files_sorted:
+                    for f in files_sorted[1:]:
+                        exclude_paths.add(f.path)
+
+            # 실제 분류 대상 필터링 (제외 대상만 걸러냄)
+            files = [f for f in files if f.path not in exclude_paths]
 
         self.logger.info("파일 분류 시작",
                         details={"files": len(files), "by_content": by_content, "by_date": by_date})

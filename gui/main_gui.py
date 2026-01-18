@@ -11,13 +11,14 @@ import queue
 from pathlib import Path
 from typing import Optional, Set
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
+from tkinter import ttk, filedialog, messagebox, scrolledtext, simpledialog
 
 # 상위 모듈 import
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import OrganizerConfig
 from src.organizer import FileOrganizer
+from src.llm_classifier import LLMConfig
 from cli.cleanup_empty import cleanup_empty_folders, find_empty_folders
 
 
@@ -49,8 +50,8 @@ class FileOrganizerGUI:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("파일 정리 도구")
-        self.root.geometry("900x800")
-        self.root.minsize(700, 600)
+        self.root.geometry("950x700")
+        self.root.minsize(800, 500)
 
         # 상태 변수
         self.target_dir = tk.StringVar(value=str(Path.home() / "Downloads"))
@@ -66,6 +67,11 @@ class FileOrganizerGUI:
         self.excluded_dirs = tk.StringVar()
         self._excluded_set = self.DEFAULT_EXCLUDED.copy()
         self._update_excluded_display()
+
+        # LLM 설정
+        self.llm_provider = tk.StringVar(value="none")
+        self.llm_api_key = tk.StringVar()
+        self.llm_model = tk.StringVar()
 
         # 작업 상태
         self.is_running = False
@@ -104,96 +110,102 @@ class FileOrganizerGUI:
 
         main_frame.bind("<Configure>", on_frame_configure)
         canvas.bind("<Configure>", on_canvas_configure)
+        main_frame.columnconfigure(0, weight=1)
 
-        # === 폴더 설정 ===
-        folder_frame = ttk.LabelFrame(main_frame, text="폴더 설정", padding="5")
-        folder_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        # === 폴더 설정 (행 0-1) ===
+        folder_frame = ttk.LabelFrame(main_frame, text="📁 폴더 설정", padding="8")
+        folder_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         folder_frame.columnconfigure(1, weight=1)
 
         # 대상 폴더
-        ttk.Label(folder_frame, text="대상 폴더:").grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Entry(folder_frame, textvariable=self.target_dir).grid(row=0, column=1, sticky="ew", padx=5)
-        ttk.Button(folder_frame, text="찾아보기", command=self._browse_target).grid(row=0, column=2, padx=5)
+        ttk.Label(folder_frame, text="대상:").grid(row=0, column=0, sticky="w", padx=5, pady=3)
+        ttk.Entry(folder_frame, textvariable=self.target_dir).grid(row=0, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Button(folder_frame, text="찾아보기", width=10, command=self._browse_target).grid(row=0, column=2, padx=5, pady=3)
 
         # 저장 폴더
-        ttk.Label(folder_frame, text="저장 폴더:").grid(row=1, column=0, sticky="w", padx=5, pady=(5, 0))
-        ttk.Entry(folder_frame, textvariable=self.archive_dir).grid(row=1, column=1, sticky="ew", padx=5, pady=(5, 0))
-        ttk.Button(folder_frame, text="찾아보기", command=self._browse_archive).grid(row=1, column=2, padx=5, pady=(5, 0))
+        ttk.Label(folder_frame, text="저장:").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+        ttk.Entry(folder_frame, textvariable=self.archive_dir).grid(row=1, column=1, sticky="ew", padx=5, pady=3)
+        ttk.Button(folder_frame, text="찾아보기", width=10, command=self._browse_archive).grid(row=1, column=2, padx=5, pady=3)
 
-        # === 제외 폴더 설정 ===
-        excluded_frame = ttk.LabelFrame(main_frame, text="제외 폴더 설정", padding="5")
-        excluded_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        # === 제외 폴더 설정 (행 1) ===
+        excluded_frame = ttk.LabelFrame(main_frame, text="🚫 제외 폴더", padding="8")
+        excluded_frame.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         excluded_frame.columnconfigure(0, weight=1)
 
         # 제외 폴더 표시
-        ttk.Label(excluded_frame, text="제외할 폴더:").grid(row=0, column=0, sticky="w", padx=5, pady=(0, 5))
         excluded_display = ttk.Entry(excluded_frame, textvariable=self.excluded_dirs, state="readonly")
-        excluded_display.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
+        excluded_display.grid(row=0, column=0, sticky="ew", padx=5, pady=3)
 
-        # 버튼들
+        # 버튼들 (한 줄로)
         excluded_btn_frame = ttk.Frame(excluded_frame)
-        excluded_btn_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+        excluded_btn_frame.grid(row=1, column=0, sticky="w", padx=5, pady=(3, 0))
 
-        ttk.Button(excluded_btn_frame, text="추가", width=10, command=self._add_excluded_dir).pack(side="left", padx=2)
-        ttk.Button(excluded_btn_frame, text="제거", width=10, command=self._remove_excluded_dir).pack(side="left", padx=2)
-        ttk.Button(excluded_btn_frame, text="기본값 복원", width=12, command=self._reset_excluded_dirs).pack(side="left", padx=2)
+        ttk.Button(excluded_btn_frame, text="추가", width=8, command=self._add_excluded_dir).pack(side="left", padx=2)
+        ttk.Button(excluded_btn_frame, text="제거", width=8, command=self._remove_excluded_dir).pack(side="left", padx=2)
+        ttk.Button(excluded_btn_frame, text="초기화", width=8, command=self._reset_excluded_dirs).pack(side="left", padx=2)
 
-        # === 정리 옵션 ===
-        option_frame = ttk.LabelFrame(main_frame, text="정리 옵션", padding="5")
-        option_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        # === 정리 옵션 (행 2) ===
+        option_frame = ttk.LabelFrame(main_frame, text="⚙️ 정리 옵션", padding="8")
+        option_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        option_frame.columnconfigure(0, weight=1)
+        option_frame.columnconfigure(1, weight=1)
 
-        # 체크박스들
-        ttk.Checkbutton(option_frame, text="중복 파일 처리 (SHA256 해싱)",
-                        variable=self.include_duplicates).grid(row=0, column=0, sticky="w", padx=5)
-        ttk.Checkbutton(option_frame, text="문서/이미지 주제별 분류",
-                        variable=self.include_classify).grid(row=0, column=1, sticky="w", padx=5)
+        # 상단: 주요 옵션
+        ttk.Checkbutton(option_frame, text="중복 파일 처리",
+                        variable=self.include_duplicates).grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        ttk.Checkbutton(option_frame, text="주제별 분류",
+                        variable=self.include_classify).grid(row=0, column=1, sticky="w", padx=5, pady=2)
 
-        ttk.Checkbutton(option_frame, text="연도별 폴더 생성",
-                        variable=self.include_year).grid(row=1, column=0, sticky="w", padx=5)
-        ttk.Checkbutton(option_frame, text="월별 폴더 생성",
-                        variable=self.include_month).grid(row=1, column=1, sticky="w", padx=5)
+        # 중단: 날짜 옵션
+        ttk.Checkbutton(option_frame, text="연도별 폴더",
+                        variable=self.include_year).grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        ttk.Checkbutton(option_frame, text="월별 폴더",
+                        variable=self.include_month).grid(row=1, column=1, sticky="w", padx=5, pady=2)
 
-        ttk.Checkbutton(option_frame, text="완료 후 빈 폴더 정리",
-                        variable=self.cleanup_empty).grid(row=2, column=0, sticky="w", padx=5)
+        # 하단: 정리 옵션
+        ttk.Checkbutton(option_frame, text="빈 폴더 정리",
+                        variable=self.cleanup_empty).grid(row=2, column=0, sticky="w", padx=5, pady=2)
 
-        # === 실행 모드 ===
-        mode_frame = ttk.LabelFrame(main_frame, text="실행 모드", padding="5")
-        mode_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
+        # === 실행 모드 (행 3) ===
+        mode_frame = ttk.LabelFrame(main_frame, text="🎯 실행 모드", padding="8")
+        mode_frame.grid(row=3, column=0, sticky="ew", pady=(0, 8))
 
         ttk.Radiobutton(mode_frame, text="미리보기 (드라이 런)",
-                        variable=self.dry_run, value=True).grid(row=0, column=0, padx=10)
+                        variable=self.dry_run, value=True).pack(side="left", padx=10)
         ttk.Radiobutton(mode_frame, text="실제 실행",
-                        variable=self.dry_run, value=False).grid(row=0, column=1, padx=10)
+                        variable=self.dry_run, value=False).pack(side="left", padx=10)
 
-        # === 버튼 ===
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=5, column=0, sticky="ew", pady=(0, 10))
+        # === 주요 버튼들 (행 4) ===
+        main_button_frame = ttk.Frame(main_frame)
+        main_button_frame.grid(row=4, column=0, sticky="ew", pady=(0, 8))
+        main_button_frame.columnconfigure(2, weight=1)  # 가운데 공간
 
-        self.run_button = ttk.Button(button_frame, text="실행", command=self._run_organizer)
-        self.run_button.pack(side="left", padx=5)
+        self.run_button = ttk.Button(main_button_frame, text="▶ 실행", command=self._run_organizer, width=10)
+        self.run_button.pack(side="left", padx=3)
 
-        self.stop_button = ttk.Button(button_frame, text="중지", command=self._stop_organizer, state="disabled")
-        self.stop_button.pack(side="left", padx=5)
+        self.stop_button = ttk.Button(main_button_frame, text="⏹ 중지", command=self._stop_organizer, state="disabled", width=10)
+        self.stop_button.pack(side="left", padx=3)
 
-        ttk.Button(button_frame, text="미리보기", command=self._show_preview).pack(side="left", padx=5)
+        ttk.Button(main_button_frame, text="👁 미리보기", command=self._show_preview, width=12).pack(side="left", padx=3)
 
-        ttk.Button(button_frame, text="로그 지우기", command=self._clear_log).pack(side="left", padx=5)
+        # 우측 버튼
+        ttk.Button(main_button_frame, text="🎯 Claude Code", command=self._show_claude_code_guide, width=14).pack(side="right", padx=3)
+        ttk.Button(main_button_frame, text="🤖 LLM 설정", command=self._open_llm_settings, width=12).pack(side="right", padx=3)
+        ttk.Button(main_button_frame, text="🔄 복원", command=self._open_restore, width=10).pack(side="right", padx=3)
+        ttk.Button(main_button_frame, text="🗑 로그 지우기", command=self._clear_log, width=12).pack(side="right", padx=3)
+        # === 로그 출력 (행 5) ===
+        log_frame = ttk.LabelFrame(main_frame, text="📋 실행 로그", padding="8")
+        log_frame.grid(row=5, column=0, sticky="nsew", pady=(0, 8))
+        main_frame.rowconfigure(5, weight=1)
 
-        ttk.Button(button_frame, text="복원 도구", command=self._open_restore).pack(side="right", padx=5)
-
-        # === 로그 출력 ===
-        log_frame = ttk.LabelFrame(main_frame, text="실행 로그", padding="5")
-        log_frame.grid(row=6, column=0, sticky="nsew", pady=(0, 10))
-        main_frame.rowconfigure(6, weight=1)
-
-        self.log_text = scrolledtext.ScrolledText(log_frame, height=12, wrap=tk.WORD)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, wrap=tk.WORD, font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
         self.log_text.config(state="disabled")
 
-        # === 상태 바 ===
+        # === 상태 바 (행 6) ===
         self.status_var = tk.StringVar(value="준비")
         status_bar = ttk.Label(main_frame, textvariable=self.status_var, relief="sunken")
-        status_bar.grid(row=7, column=0, sticky="ew")
+        status_bar.grid(row=6, column=0, sticky="ew")
 
     def _browse_target(self):
         """대상 폴더 선택"""
@@ -277,9 +289,255 @@ class FileOrganizerGUI:
             self._update_excluded_display()
             messagebox.showinfo("완료", "제외 폴더 목록을 기본값으로 복원했습니다.")
 
+    def _open_llm_settings(self):
+        """LLM 설정 창 열기"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("🤖 LLM 분류 설정")
+        dialog.geometry("600x450")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # 프레임
+        main = ttk.Frame(dialog, padding="15")
+        main.pack(fill="both", expand=True)
+
+        # 제공자 선택
+        ttk.Label(main, text="LLM 제공자:").grid(row=0, column=0, sticky="w", pady=5)
+        provider_combo = ttk.Combobox(main, textvariable=self.llm_provider, width=25,
+                                     values=["none (키워드 기반)", "claude", "openai", "gemini", "ollama"],
+                                     state="readonly")
+        provider_combo.grid(row=0, column=1, sticky="ew", pady=5, padx=5)
+
+        # API 키 (Claude, OpenAI, Gemini용)
+        api_key_label = ttk.Label(main, text="API 키:")
+        api_key_label.grid(row=1, column=0, sticky="w", pady=5)
+        api_key_entry = ttk.Entry(main, textvariable=self.llm_api_key, width=30, show="*")
+        api_key_entry.grid(row=1, column=1, sticky="ew", pady=5, padx=5)
+
+        # 모델 선택/입력
+        model_label = ttk.Label(main, text="모델:")
+        model_label.grid(row=2, column=0, sticky="w", pady=5)
+        
+        # 모델 콤보박스 (처음엔 Entry로)
+        model_frame = ttk.Frame(main)
+        model_frame.grid(row=2, column=1, sticky="ew", pady=5, padx=5)
+        model_frame.columnconfigure(0, weight=1)
+        
+        model_entry = ttk.Entry(model_frame, textvariable=self.llm_model)
+        model_entry.pack(side="left", fill="x", expand=True)
+        
+        # Ollama 모델 새로고침 버튼
+        refresh_btn = ttk.Button(model_frame, text="🔄", width=3)
+        refresh_btn.pack(side="left", padx=(5, 0))
+
+        main.columnconfigure(1, weight=1)
+
+        # Ollama 모델 목록 프레임 (처음엔 숨김)
+        ollama_frame = ttk.LabelFrame(main, text="📦 사용 가능한 Ollama 모델", padding="10")
+        ollama_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=10)
+        ollama_frame.grid_remove()  # 숨김
+
+        # 모델 리스트
+        listbox_frame = ttk.Frame(ollama_frame)
+        listbox_frame.pack(fill="both", expand=True)
+        
+        model_listbox = tk.Listbox(listbox_frame, height=6)
+        model_listbox.pack(side="left", fill="both", expand=True)
+        
+        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=model_listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        model_listbox.config(yscrollcommand=scrollbar.set)
+
+        # Ollama 버튼들
+        ollama_btn_frame = ttk.Frame(ollama_frame)
+        ollama_btn_frame.pack(fill="x", pady=(5, 0))
+        
+        def load_ollama_models():
+            """Ollama 모델 목록 로드"""
+            from src.llm_classifier import OllamaProvider
+            models = OllamaProvider.list_models()
+            model_listbox.delete(0, tk.END)
+            if models:
+                for model in models:
+                    model_listbox.insert(tk.END, model)
+                status_label.config(text=f"✓ {len(models)}개 모델 발견")
+            else:
+                status_label.config(text="⚠ Ollama가 실행되지 않았거나 모델이 없습니다")
+        
+        def select_model():
+            """선택된 모델 적용"""
+            selection = model_listbox.curselection()
+            if selection:
+                selected = model_listbox.get(selection[0])
+                self.llm_model.set(selected)
+                messagebox.showinfo("선택 완료", f"모델 '{selected}'이(가) 선택되었습니다.")
+        
+        def show_recommended_models():
+            """추천 모델 목록 표시"""
+            rec_dialog = tk.Toplevel(dialog)
+            rec_dialog.title("📦 추천 모델")
+            rec_dialog.geometry("500x400")
+            rec_dialog.transient(dialog)
+            rec_dialog.grab_set()
+            
+            frame = ttk.Frame(rec_dialog, padding="10")
+            frame.pack(fill="both", expand=True)
+            
+            ttk.Label(frame, text="다운로드할 모델을 선택하세요:", font=("", 10, "bold")).pack(pady=5)
+            
+            # 추천 모델 목록
+            recommended = [
+                ("gemini-3-flash-preview:cloud", "Gemini Flash (빠름, 클라우드)"),
+                ("gemini-3-pro-preview:latest", "Gemini Pro (강력함, 클라우드)"),
+                ("deepseek-v3.1:671b-cloud", "DeepSeek V3.1 (671B, 클라우드)"),
+                ("deepseek-v3.2:cloud", "DeepSeek V3.2 (최신, 클라우드)"),
+                ("qwen3-coder:480b-cloud", "Qwen3 Coder (480B, 코딩 특화)"),
+                ("glm-4.6:cloud", "GLM-4.6 (클라우드)"),
+                ("cogito-2.1:671b-cloud", "Cogito 2.1 (671B, 클라우드)"),
+                ("llama3.2", "Llama 3.2 (메타, 범용)"),
+                ("mistral", "Mistral (빠름, 효율적)"),
+                ("qwen2.5:7b", "Qwen 2.5 7B (경량)"),
+            ]
+            
+            rec_listbox = tk.Listbox(frame, height=12)
+            rec_listbox.pack(fill="both", expand=True, pady=5)
+            
+            for model, desc in recommended:
+                rec_listbox.insert(tk.END, f"{model} - {desc}")
+            
+            btn_frame = ttk.Frame(frame)
+            btn_frame.pack(pady=5)
+            
+            def download_selected():
+                selection = rec_listbox.curselection()
+                if selection:
+                    selected = rec_listbox.get(selection[0])
+                    model_name = selected.split(" - ")[0]
+                    rec_dialog.destroy()
+                    start_download(model_name)
+                else:
+                    messagebox.showwarning("선택 필요", "다운로드할 모델을 선택해주세요.")
+            
+            ttk.Button(btn_frame, text="다운로드", command=download_selected).pack(side="left", padx=5)
+            ttk.Button(btn_frame, text="취소", command=rec_dialog.destroy).pack(side="left", padx=5)
+        
+        def start_download(model_name):
+            """모델 다운로드 시작"""
+            from src.llm_classifier import OllamaProvider
+            status_label.config(text=f"⏳ '{model_name}' 다운로드 중...")
+            dialog.update()
+            
+            # 백그라운드에서 다운로드
+            import threading
+            def download():
+                success = OllamaProvider.pull_model(model_name)
+                dialog.after(0, lambda: on_download_complete(success, model_name))
+            
+            def on_download_complete(success, name):
+                if success:
+                    status_label.config(text=f"✓ '{name}' 다운로드 완료!")
+                    load_ollama_models()
+                else:
+                    status_label.config(text=f"✗ '{name}' 다운로드 실패")
+            
+            threading.Thread(target=download, daemon=True).start()
+        
+        def pull_model():
+            """새 모델 다운로드"""
+            # 추천 모델 표시 또는 직접 입력
+            choice = messagebox.askquestion(
+                "모델 다운로드",
+                "추천 모델 목록에서 선택하시겠습니까?\n\n'아니오'를 선택하면 모델명을 직접 입력할 수 있습니다.",
+                parent=dialog
+            )
+            
+            if choice == "yes":
+                show_recommended_models()
+            else:
+                model_name = tk.simpledialog.askstring(
+                    "모델 다운로드",
+                    "다운로드할 모델명을 입력하세요:\n(예: llama3.2, mistral, qwen2.5:7b)",
+                    parent=dialog
+                )
+                if model_name:
+                    start_download(model_name)
+        
+        ttk.Button(ollama_btn_frame, text="모델 선택", command=select_model).pack(side="left", padx=2)
+        ttk.Button(ollama_btn_frame, text="추천 모델 다운로드", command=pull_model).pack(side="left", padx=2)
+        
+        status_label = ttk.Label(ollama_frame, text="")
+        status_label.pack(pady=(5, 0))
+
+        # 제공자 변경 시 UI 업데이트
+        def on_provider_change(*args):
+            provider = self.llm_provider.get().split()[0]
+            
+            if provider == "ollama":
+                # Ollama 선택 시
+                api_key_label.config(state="disabled")
+                api_key_entry.config(state="disabled")
+                refresh_btn.config(state="normal", command=load_ollama_models)
+                ollama_frame.grid()  # 표시
+                load_ollama_models()  # 자동 로드
+            else:
+                # 다른 제공자 선택 시
+                api_key_label.config(state="normal")
+                api_key_entry.config(state="normal")
+                refresh_btn.config(state="disabled")
+                ollama_frame.grid_remove()  # 숨김
+        
+        self.llm_provider.trace_add("write", on_provider_change)
+        on_provider_change()  # 초기 설정
+
+        # 도움말
+        help_text = """
+🔸 none: LLM 없이 키워드 기반 분류 (빠름, 무료)
+🔸 claude: Anthropic Claude (API 키 필요, 정확함)
+🔸 openai: OpenAI GPT (API 키 필요, 빠름)
+🔸 gemini: Google Gemini (API 키 필요, 저렴함)
+🔸 ollama: 로컬 LLM (무료, 오프라인, API 키 불필요)
+
+💡 Ollama 사용 시:
+1. Ollama 설치: https://ollama.ai/download
+2. 터미널에서 실행: ollama serve
+3. 이 창에서 모델 선택 또는 다운로드
+        """
+        help_label = ttk.Label(main, text=help_text, justify="left",
+                              relief="groove", padding=10, font=("", 9))
+        help_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=10)
+
+        # 버튼
+        btn_frame = ttk.Frame(main)
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=10)
+
+        def save():
+            provider = self.llm_provider.get().split()[0]
+            model = self.llm_model.get() or "(기본값)"
+            messagebox.showinfo("저장", f"LLM 설정이 저장되었습니다.\n제공자: {provider}\n모델: {model}")
+            dialog.destroy()
+
+        ttk.Button(btn_frame, text="저장", width=12, command=save).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="취소", width=12, command=dialog.destroy).pack(side="left", padx=5)
+
     def _log(self, message: str):
         """로그 메시지 큐에 추가"""
         self.message_queue.put(message)
+
+    def _get_llm_config(self) -> Optional[LLMConfig]:
+        """현재 LLM 설정 반환"""
+        provider = self.llm_provider.get().split()[0]  # "none (키워드 기반)" → "none"
+        
+        if provider == "none":
+            return None
+        
+        api_key = self.llm_api_key.get() or None
+        model = self.llm_model.get() or None
+        
+        return LLMConfig(
+            provider=provider,
+            api_key=api_key,
+            model=model
+        )
 
     def _show_preview(self):
         """미리보기 창 표시"""
@@ -315,12 +573,20 @@ class FileOrganizerGUI:
             )
             config.excluded_dirs = self._excluded_set.copy()
 
-            organizer = FileOrganizer(config)
+            # LLM 설정
+            llm_config = self._get_llm_config()
+
+            organizer = FileOrganizer(config, llm_config=llm_config)
 
             # 파일 스캔
             files = organizer.scan_directories()
 
-            # 분류 정보 수집
+            # 중복 파일 정보를 먼저 수집
+            duplicates = []
+            if self.include_duplicates.get():
+                duplicates = organizer.find_duplicates()
+
+            # 분류 정보 수집 (중복 제외 후 진행)
             classifications = []
             if self.include_classify.get():
                 classify_files = [
@@ -329,8 +595,8 @@ class FileOrganizerGUI:
                 ]
 
                 if classify_files:
-                    classifications = organizer.classifier.classify_files(
-                        classify_files, by_content=True, by_date=True
+                    classifications = organizer.classify_files(
+                        classify_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
                     )
 
                     for result in classifications:
@@ -341,11 +607,6 @@ class FileOrganizerGUI:
                             path_parts.append(f"{result.month:02d}")
                         target_dir = Path(*[str(p) for p in path_parts])
                         result.target_path = target_dir / result.file_info.path.name
-
-            # 중복 파일 정보
-            duplicates = []
-            if self.include_duplicates.get():
-                duplicates = organizer.find_duplicates()
 
             # 미리보기 창 표시
             self.root.after(0, lambda: self._show_preview_window(
@@ -575,7 +836,10 @@ class FileOrganizerGUI:
             )
             config.excluded_dirs = self._excluded_set.copy()
 
-            organizer = FileOrganizer(config)
+            # LLM 설정
+            llm_config = self._get_llm_config()
+
+            organizer = FileOrganizer(config, llm_config=llm_config)
 
             try:
                 # 1. 파일 스캔
@@ -608,9 +872,17 @@ class FileOrganizerGUI:
                     ]
                     self._log(f"  분류 대상: {len(classify_files):,}개")
 
+                    # LLM 사용 여부 표시
+                    llm_config = self._get_llm_config()
+                    if llm_config and llm_config.provider != "none":
+                        self._log(f"  📡 LLM 분류 활성화: {llm_config.provider}")
+                        self._log(f"  ⚠️ LLM 분류는 시간이 오래 걸릴 수 있습니다...")
+                    else:
+                        self._log(f"  🔤 키워드 기반 분류 (빠름)")
+
                     if classify_files:
-                        classifications = organizer.classifier.classify_files(
-                            classify_files, by_content=True, by_date=True
+                        classifications = organizer.classify_files(
+                            classify_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
                         )
 
                         for result in classifications:
@@ -685,6 +957,103 @@ class FileOrganizerGUI:
         """실행 중지"""
         self._log("\n중지 요청...")
         self.is_running = False
+
+    def _show_claude_code_guide(self):
+        """Claude Code 모드 가이드 표시"""
+        guide_window = tk.Toplevel(self.root)
+        guide_window.title("🎯 Claude Code로 정확한 파일 분류")
+        guide_window.geometry("700x600")
+        guide_window.transient(self.root)
+
+        main_frame = ttk.Frame(guide_window, padding="20")
+        main_frame.pack(fill="both", expand=True)
+
+        # 제목
+        title_label = ttk.Label(main_frame, text="Claude Code로 정확한 파일 분류하기",
+                               font=("", 14, "bold"))
+        title_label.pack(pady=(0, 10))
+
+        # 설명 텍스트
+        guide_text = """
+🎯 Claude Code란?
+
+Claude AI와 실시간으로 협업하여 파일을 분류하는 방식입니다.
+단순 자동화가 아닌, AI와 대화하며 맞춤형 분류 규칙을 적용합니다.
+
+📊 분류 모드 비교
+
+┌─────────────┬────────┬──────────┬─────────────┐
+│   방식      │  속도  │  정확도  │  적합한 경우  │
+├─────────────┼────────┼──────────┼─────────────┤
+│ 확장자 기반 │ ⚡⚡⚡  │    ⭐   │  단순 정리   │
+│ LLM 자동    │   🐌   │  ⭐⭐⭐  │ 50개 이하   │
+│ Claude Code │ ⚡⚡⚡  │ ⭐⭐⭐⭐⭐ │ 대량/정확함 │
+└─────────────┴────────┴──────────┴─────────────┘
+
+💡 Claude Code의 장점
+
+✓ 파일 내용을 직접 읽고 분석
+✓ 대화로 분류 규칙 조정 가능
+✓ 프로젝트 구조 이해
+✓ 대량 파일도 빠르게 처리
+✓ 복잡한 조건부 분류 가능
+
+📝 사용 예시
+
+1. 업무 문서 정리
+   "Downloads 폴더의 문서를 정리해줘.
+    송장은 '재무/송장'으로, 계약서는 '법무'로 분류해."
+
+2. 사진 정리
+   "사진을 정리하되, 스크린샷은 별도 폴더로,
+    가족 사진은 연도별로 분류해줘."
+
+3. 개발 프로젝트
+   "코드 파일을 프로젝트별로 정리하고,
+    README는 각 프로젝트 폴더 내 docs로 이동해."
+
+🚀 시작하기
+
+1. VSCode에서 Claude Code Extension 설치
+   또는 CLI: npm install -g @anthropic-ai/claude-code
+
+2. 이 프로젝트 폴더에서 실행:
+   - VSCode: Ctrl+Shift+P → "Claude Code: Start"
+   - CLI: claude-code
+
+3. Claude에게 요청:
+   "파일을 분류해줘. [여기에 요구사항 입력]"
+
+📚 자세한 가이드: CLAUDE_CODE_MODE.md 참고
+"""
+
+        text_widget = scrolledtext.ScrolledText(main_frame, wrap=tk.WORD, height=25,
+                                               font=("Consolas", 9))
+        text_widget.pack(fill="both", expand=True, pady=10)
+        text_widget.insert("1.0", guide_text)
+        text_widget.config(state="disabled")
+
+        # 버튼
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill="x", pady=(10, 0))
+
+        def open_guide_file():
+            """가이드 파일 열기"""
+            import subprocess
+            import sys
+            guide_path = Path(__file__).parent.parent / "CLAUDE_CODE_MODE.md"
+            if guide_path.exists():
+                if sys.platform == "win32":
+                    subprocess.run(["start", "", str(guide_path)], shell=True)
+                elif sys.platform == "darwin":
+                    subprocess.run(["open", str(guide_path)])
+                else:
+                    subprocess.run(["xdg-open", str(guide_path)])
+            else:
+                messagebox.showinfo("알림", "가이드 파일을 찾을 수 없습니다.")
+
+        ttk.Button(btn_frame, text="📖 전체 가이드 보기", command=open_guide_file).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="닫기", command=guide_window.destroy).pack(side="right", padx=5)
 
     def _open_restore(self):
         """복원 도구 열기"""

@@ -13,6 +13,7 @@ import string
 
 from .config import OrganizerConfig, DEFAULT_CATEGORIES
 from .duplicate_finder import FileInfo
+from .llm_classifier import LLMClassifier, LLMConfig
 
 
 @dataclass
@@ -111,10 +112,23 @@ class TextAnalyzer:
 class FileClassifier:
     """파일 분류 클래스"""
 
-    def __init__(self, config: OrganizerConfig):
+    def __init__(self, config: OrganizerConfig, llm_config: Optional[LLMConfig] = None):
         self.config = config
         self.text_analyzer = TextAnalyzer()
         self.categories = DEFAULT_CATEGORIES.copy()
+        
+        # LLM 분류기 초기화
+        self.llm_classifier = None
+        if llm_config and llm_config.provider != "none":
+            try:
+                self.llm_classifier = LLMClassifier(llm_config)
+                if self.llm_classifier.is_available():
+                    print(f"✓ LLM 분류기 활성화: {llm_config.provider}")
+                else:
+                    self.llm_classifier = None
+            except Exception as e:
+                print(f"⚠ LLM 분류기 초기화 실패: {e}")
+                self.llm_classifier = None
 
     def add_category(self, name: str, keywords: List[str]):
         """사용자 정의 카테고리 추가"""
@@ -189,7 +203,37 @@ class FileClassifier:
 
         file_type = self._get_file_type(file_info.path)
 
-        # 텍스트 파일인 경우 내용 분석
+        # LLM 분류 시도 (텍스트 파일만, 크기 제한)
+        if self.llm_classifier and self.llm_classifier.is_available() and file_type == "text":
+            # 크기 체크
+            if file_info.size > self.config.llm_max_file_size:
+                result.category = self._classify_by_type(file_type)
+                result.confidence = 0.6
+                result.year, result.month = self._extract_date_info(file_info)
+                return result
+
+            content = self._read_text_file(file_info.path)
+            if content:
+                try:
+                    llm_result = self.llm_classifier.classify_file(
+                        filename=file_info.path.name,
+                        content_preview=content[:self.config.llm_content_preview_length],
+                        available_categories=list(self.categories.keys()) + ["문서", "미디어", "압축파일", "기타"]
+                    )
+                    
+                    result.category = llm_result.get("category", "기타")
+                    result.confidence = llm_result.get("confidence", 0.5)
+                    result.keywords = [llm_result.get("reasoning", "")]
+                    
+                    # LLM 분류가 성공하면 날짜 정보만 추가하고 반환
+                    if result.confidence > 0.3:
+                        result.year, result.month = self._extract_date_info(file_info)
+                        return result
+                except Exception as e:
+                    print(f"⚠ LLM 분류 실패 ({file_info.path.name}): {e}")
+                    # Fallback to traditional classification
+
+        # 기존 키워드 기반 분류 (LLM 실패 시 또는 LLM 없을 때)
         if file_type == "text":
             content = self._read_text_file(file_info.path)
             if content:
@@ -215,10 +259,27 @@ class FileClassifier:
                 if best_category and best_score > 0.1:
                     result.category = best_category
                     result.confidence = best_score
+                else:
+                    result.category = self._classify_by_type(file_type)
+                    result.confidence = 0.5
         else:
             # 비텍스트 파일: 파일명과 확장자 기반 분류
-            result.category = self._classify_by_type(file_type)
-            result.confidence = 0.8
+            # LLM으로 파일명 기반 분류 시도
+            if self.llm_classifier and self.llm_classifier.is_available():
+                try:
+                    llm_result = self.llm_classifier.classify_file(
+                        filename=file_info.path.name,
+                        content_preview=f"파일 유형: {file_type}\n확장자: {file_info.path.suffix}",
+                        available_categories=list(self.categories.keys()) + ["문서", "미디어", "압축파일", "기타"]
+                    )
+                    result.category = llm_result.get("category", self._classify_by_type(file_type))
+                    result.confidence = llm_result.get("confidence", 0.6)
+                except Exception:
+                    result.category = self._classify_by_type(file_type)
+                    result.confidence = 0.6
+            else:
+                result.category = self._classify_by_type(file_type)
+                result.confidence = 0.6
 
         # 날짜 정보 추출
         result.year, result.month = self._extract_date_info(file_info)
@@ -280,7 +341,8 @@ class FileClassifier:
 
     def classify_files(self, files: List[FileInfo],
                        by_content: bool = True,
-                       by_date: bool = True) -> List[ClassificationResult]:
+                       by_date: bool = True,
+                       force_llm: bool = False) -> List[ClassificationResult]:
         """
         파일 목록 분류
 
@@ -288,10 +350,32 @@ class FileClassifier:
             files: FileInfo 리스트
             by_content: 내용 기반 분류 여부
             by_date: 날짜 기반 분류 여부
+            force_llm: LLM 강제 사용 (파일 수 제한 무시)
 
         Returns:
             분류 결과 리스트
         """
+        # LLM 사용 시 파일 수 제한 체크
+        if self.llm_classifier and self.llm_classifier.is_available() and not force_llm:
+            if len(files) > self.config.llm_batch_size_limit:
+                print(f"\n{'='*60}")
+                print(f"⚠️  LLM 분류 파일 수 제한 초과")
+                print(f"{'='*60}")
+                print(f"대상 파일: {len(files)}개")
+                print(f"LLM 자동 처리 제한: {self.config.llm_batch_size_limit}개")
+                print(f"예상 소요 시간: 약 {len(files) * 2 // 60}분 이상")
+                print(f"\n💡 권장 옵션:")
+                print(f"  1. 확장자 기반 분류 사용 (빠름)")
+                print(f"  2. Claude Code로 실행하여 실시간 협업 (정확함)")
+                print(f"  3. 파일 수를 {self.config.llm_batch_size_limit}개 이하로 줄이기")
+                print(f"{'='*60}\n")
+
+                # 키워드 기반으로 폴백
+                print("→ 키워드 기반 분류로 전환합니다...\n")
+                # LLM 임시 비활성화
+                original_llm = self.llm_classifier
+                self.llm_classifier = None
+
         results = []
 
         for i, file_info in enumerate(files):
@@ -311,6 +395,10 @@ class FileClassifier:
             # 진행 상황 출력
             if (i + 1) % 100 == 0:
                 print(f"   분류 진행: {i + 1}/{len(files)}")
+
+        # LLM 복원 (임시로 비활성화했던 경우)
+        if 'original_llm' in locals():
+            self.llm_classifier = original_llm
 
         return results
 

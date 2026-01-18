@@ -179,8 +179,9 @@ def run_organizer(
         print(f"   분류 대상: {len(classify_files):,}개 (문서/이미지)")
 
         if classify_files:
-            classifications = organizer.classifier.classify_files(
-                classify_files, by_content=True, by_date=True
+            # 중복 파일 제외를 반영하기 위해 FileOrganizer의 메서드 사용
+            classifications = organizer.classify_files(
+                classify_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
             )
 
             # 대상 경로 생성

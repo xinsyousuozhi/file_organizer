@@ -67,8 +67,16 @@ class OrganizerConfig:
     # 파일명 유사도 임계값 (0.0 ~ 1.0)
     filename_similarity_threshold: float = 0.6
 
+    # 내용 유사도 임계값 (0 ~ 100, ssdeep 퍼지 해싱용)
+    content_similarity_threshold: int = 75
+
     # 로그 파일 경로
     log_file: Path = field(default=None)
+
+    # LLM 분류 설정
+    llm_max_file_size: int = 5 * 1024 * 1024  # 5MB
+    llm_content_preview_length: int = 2000  # 2000자
+    llm_batch_size_limit: int = 50  # LLM 자동 분류 최대 파일 수
 
     def __post_init__(self):
         """초기화 후 처리"""
