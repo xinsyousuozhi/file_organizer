@@ -104,9 +104,34 @@ def create_config(
     return config
 
 
+def _read_file_content(file_info) -> str:
+    """파일 내용 미리보기 읽기"""
+    content_preview = ""
+    try:
+        ext = file_info.path.suffix.lower()
+        if ext in {'.txt', '.md', '.py', '.js', '.json', '.csv', '.log', '.rst'}:
+            with open(file_info.path, 'r', encoding='utf-8', errors='ignore') as f:
+                content_preview = f.read(2000)
+        elif ext == '.pdf':
+            try:
+                import PyPDF2
+                with open(file_info.path, 'rb') as f:
+                    reader = PyPDF2.PdfReader(f)
+                    if len(reader.pages) > 0:
+                        content_preview = reader.pages[0].extract_text()[:2000]
+            except:
+                pass
+        elif ext in {'.doc', '.docx', '.hwp', '.hwpx'}:
+            # 바이너리 문서는 파일명만 사용
+            content_preview = f"[문서 파일: {file_info.path.name}]"
+    except:
+        pass
+    return content_preview
+
+
 def _classify_with_llm(organizer, files, llm_classifier, config, include_year, include_month):
     """
-    LLM을 사용한 파일 분류
+    LLM을 사용한 파일 분류 (배치 처리 지원)
 
     Args:
         organizer: FileOrganizer 인스턴스
@@ -131,58 +156,85 @@ def _classify_with_llm(organizer, files, llm_classifier, config, include_year, i
 
     results = []
     total = len(files)
+    batch_size = 20  # 배치당 파일 수
 
-    print(f"   LLM 분류 진행 중...")
+    print(f"   LLM 분류 진행 중... (배치 크기: {batch_size})")
 
-    for i, file_info in enumerate(files):
-        if (i + 1) % 10 == 0 or i == 0:
-            print(f"   진행: {i + 1}/{total}")
+    # 배치 처리 가능 여부 확인
+    provider = llm_classifier.provider
+    use_batch = hasattr(provider, 'classify_files_batch')
 
-        # 파일 내용 미리보기 읽기
-        content_preview = ""
-        try:
-            ext = file_info.path.suffix.lower()
-            if ext in {'.txt', '.md', '.py', '.js', '.json', '.csv', '.log'}:
-                with open(file_info.path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content_preview = f.read(2000)
-            elif ext == '.pdf':
-                try:
-                    import PyPDF2
-                    with open(file_info.path, 'rb') as f:
-                        reader = PyPDF2.PdfReader(f)
-                        if len(reader.pages) > 0:
-                            content_preview = reader.pages[0].extract_text()[:2000]
-                except:
-                    pass
-        except:
-            pass
+    if use_batch and total > 1:
+        # 배치 처리
+        for batch_start in range(0, total, batch_size):
+            batch_end = min(batch_start + batch_size, total)
+            batch_files = files[batch_start:batch_end]
 
-        # LLM 분류 호출
-        llm_result = llm_classifier.classify_file(
-            filename=file_info.path.name,
-            content_preview=content_preview,
-            available_categories=available_categories
-        )
+            print(f"   배치 처리: {batch_start + 1}-{batch_end}/{total}")
 
-        category = llm_result.get("category", "기타")
-        confidence = llm_result.get("confidence", 0.5)
+            # 배치 데이터 준비
+            batch_data = []
+            for file_info in batch_files:
+                content_preview = _read_file_content(file_info)
+                batch_data.append({
+                    "filename": file_info.path.name,
+                    "content_preview": content_preview
+                })
 
-        # 파일 날짜 추출
-        file_date = datetime.fromtimestamp(file_info.modified_time)
-        year = file_date.year
-        month = file_date.month
+            # 배치 분류 호출
+            batch_results = provider.classify_files_batch(batch_data, available_categories)
 
-        result = ClassificationResult(
-            file_info=file_info,
-            category=category,
-            subcategory=None,
-            year=year if include_year else None,
-            month=month if include_month else None,
-            confidence=confidence,
-            keywords=["llm_classified"]
-        )
+            # 결과 매핑
+            for i, file_info in enumerate(batch_files):
+                if i < len(batch_results):
+                    llm_result = batch_results[i]
+                    category = llm_result.get("category", "기타")
+                    confidence = llm_result.get("confidence", 0.5)
+                else:
+                    category = "기타"
+                    confidence = 0.1
 
-        results.append(result)
+                file_date = datetime.fromtimestamp(file_info.modified_time)
+
+                result = ClassificationResult(
+                    file_info=file_info,
+                    category=category,
+                    subcategory=None,
+                    year=file_date.year if include_year else None,
+                    month=file_date.month if include_month else None,
+                    confidence=confidence,
+                    keywords=["llm_classified"]
+                )
+                results.append(result)
+    else:
+        # 개별 처리 (폴백)
+        for i, file_info in enumerate(files):
+            if (i + 1) % 10 == 0 or i == 0:
+                print(f"   진행: {i + 1}/{total}")
+
+            content_preview = _read_file_content(file_info)
+
+            llm_result = llm_classifier.classify_file(
+                filename=file_info.path.name,
+                content_preview=content_preview,
+                available_categories=available_categories
+            )
+
+            category = llm_result.get("category", "기타")
+            confidence = llm_result.get("confidence", 0.5)
+
+            file_date = datetime.fromtimestamp(file_info.modified_time)
+
+            result = ClassificationResult(
+                file_info=file_info,
+                category=category,
+                subcategory=None,
+                year=file_date.year if include_year else None,
+                month=file_date.month if include_month else None,
+                confidence=confidence,
+                keywords=["llm_classified"]
+            )
+            results.append(result)
 
     print(f"   LLM 분류 완료: {len(results)}개 파일")
 
@@ -288,12 +340,32 @@ def run_organizer(
         print(f"   분류 대상: {len(classify_files):,}개 (문서/이미지)")
 
         if classify_files:
-            # LLM 분류기가 있으면 LLM 기반 분류 수행
+            # LLM 분류기가 있으면 문서 파일만 LLM으로 분류
             if llm_classifier:
-                classifications = _classify_with_llm(
-                    organizer, classify_files, llm_classifier,
-                    config, include_year, include_month
-                )
+                # 문서 파일과 이미지 파일 분리
+                doc_extensions = {'.pdf', '.doc', '.docx', '.hwp', '.hwpx', '.txt', '.md', '.ppt', '.pptx', '.xls', '.xlsx'}
+                doc_files = [f for f in classify_files if f.path.suffix.lower() in doc_extensions]
+                other_files = [f for f in classify_files if f.path.suffix.lower() not in doc_extensions]
+
+                print(f"   문서 파일 (LLM 분류): {len(doc_files)}개")
+                print(f"   기타 파일 (기본 분류): {len(other_files)}개")
+
+                # 문서 파일은 LLM으로 분류
+                doc_classifications = []
+                if doc_files:
+                    doc_classifications = _classify_with_llm(
+                        organizer, doc_files, llm_classifier,
+                        config, include_year, include_month
+                    )
+
+                # 이미지 등 기타 파일은 기존 방식으로 분류
+                other_classifications = []
+                if other_files:
+                    other_classifications = organizer.classify_files(
+                        other_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
+                    )
+
+                classifications = doc_classifications + other_classifications
             else:
                 # 기존 분류 (중복 파일 제외를 반영)
                 classifications = organizer.classify_files(
