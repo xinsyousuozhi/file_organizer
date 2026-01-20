@@ -131,6 +131,19 @@ def main():
         action="store_true",
         help="월별 하위 폴더 생성 (기본: 연도까지만)"
     )
+    parser.add_argument(
+        "--llm",
+        type=str,
+        default=None,
+        choices=["gemini-cli", "gemini", "claude", "openai", "ollama"],
+        help="LLM 분류 사용 (gemini-cli 권장)"
+    )
+    parser.add_argument(
+        "--llm-model",
+        type=str,
+        default=None,
+        help="LLM 모델 이름 (예: gemini-2.5-flash)"
+    )
 
     args = parser.parse_args()
 
@@ -222,7 +235,9 @@ def main():
         config,
         execute=args.execute,
         include_year=True,
-        include_month=args.with_month
+        include_month=args.with_month,
+        llm_provider=args.llm,
+        llm_model=args.llm_model
     )
 
     if not args.execute:

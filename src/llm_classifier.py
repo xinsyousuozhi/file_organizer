@@ -204,9 +204,146 @@ JSON 형식으로 응답해주세요:
             }
 
 
+class GeminiCLIProvider(LLMProvider):
+    """Gemini CLI 제공자 (gemini 명령어 사용)"""
+
+    def __init__(self, config: LLMConfig):
+        self.config = config
+        self.model = config.model or "gemini-2.5-flash"
+        self._check_cli_available()
+
+    def _check_cli_available(self) -> bool:
+        """Gemini CLI 사용 가능 여부 확인"""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["gemini", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return False
+
+    def classify_file(self, filename: str, content_preview: str,
+                     available_categories: List[str]) -> Dict[str, Any]:
+        import subprocess
+        import tempfile
+
+        prompt = f"""다음 파일을 분류해주세요.
+
+파일명: {filename}
+내용 미리보기:
+{content_preview[:2000]}
+
+사용 가능한 카테고리: {', '.join(available_categories)}
+
+반드시 아래 JSON 형식으로만 응답해주세요 (다른 텍스트 없이):
+{{"category": "가장 적합한 카테고리", "confidence": 0.0-1.0, "reasoning": "분류 이유"}}"""
+
+        try:
+            # gemini CLI 호출
+            result = subprocess.run(
+                ["gemini", "-m", self.model, prompt],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                encoding='utf-8'
+            )
+
+            if result.returncode != 0:
+                raise Exception(f"Gemini CLI 오류: {result.stderr}")
+
+            response_text = result.stdout.strip()
+
+            # JSON 추출 (응답에서 JSON 부분만 파싱)
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                return json.loads(json_str)
+            else:
+                raise Exception("JSON 응답을 찾을 수 없음")
+
+        except subprocess.TimeoutExpired:
+            return {
+                "category": available_categories[0] if available_categories else "기타",
+                "confidence": 0.1,
+                "reasoning": "Gemini CLI 타임아웃"
+            }
+        except Exception as e:
+            return {
+                "category": available_categories[0] if available_categories else "기타",
+                "confidence": 0.1,
+                "reasoning": f"Gemini CLI 오류: {str(e)}"
+            }
+
+    def classify_files_batch(self, files: List[Dict],
+                            available_categories: List[str]) -> List[Dict[str, Any]]:
+        """
+        여러 파일을 한 번에 분류 (배치 처리)
+
+        Args:
+            files: [{"filename": "...", "content_preview": "..."}] 리스트
+            available_categories: 사용 가능한 카테고리 목록
+
+        Returns:
+            분류 결과 리스트
+        """
+        import subprocess
+
+        # 배치 프롬프트 생성
+        file_list = "\n\n".join([
+            f"[파일 {i+1}]\n파일명: {f['filename']}\n내용: {f['content_preview'][:500]}"
+            for i, f in enumerate(files[:20])  # 최대 20개
+        ])
+
+        prompt = f"""다음 파일들을 분류해주세요.
+
+{file_list}
+
+사용 가능한 카테고리: {', '.join(available_categories)}
+
+각 파일에 대해 JSON 배열로 응답해주세요:
+[{{"filename": "파일명", "category": "카테고리", "confidence": 0.0-1.0, "reasoning": "이유"}}, ...]"""
+
+        try:
+            result = subprocess.run(
+                ["gemini", "-m", self.model, prompt],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                encoding='utf-8'
+            )
+
+            if result.returncode != 0:
+                raise Exception(f"Gemini CLI 오류: {result.stderr}")
+
+            response_text = result.stdout.strip()
+
+            # JSON 배열 추출
+            json_start = response_text.find('[')
+            json_end = response_text.rfind(']') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                return json.loads(json_str)
+            else:
+                raise Exception("JSON 배열을 찾을 수 없음")
+
+        except Exception as e:
+            # 실패 시 개별 파일 기본값 반환
+            return [{
+                "filename": f["filename"],
+                "category": available_categories[0] if available_categories else "기타",
+                "confidence": 0.1,
+                "reasoning": f"배치 처리 실패: {str(e)}"
+            } for f in files]
+
+
 class OllamaProvider(LLMProvider):
     """Ollama 로컬 LLM 제공자"""
-    
+
     def __init__(self, config: LLMConfig):
         self.config = config
         self.base_url = config.base_url or "http://localhost:11434"
@@ -289,11 +426,12 @@ JSON 형식으로만 응답해주세요:
 
 class LLMClassifier:
     """LLM 기반 파일 분류기"""
-    
+
     PROVIDERS = {
         "claude": ClaudeProvider,
         "openai": OpenAIProvider,
         "gemini": GeminiProvider,
+        "gemini-cli": GeminiCLIProvider,
         "ollama": OllamaProvider,
     }
     

@@ -104,12 +104,99 @@ def create_config(
     return config
 
 
+def _classify_with_llm(organizer, files, llm_classifier, config, include_year, include_month):
+    """
+    LLM을 사용한 파일 분류
+
+    Args:
+        organizer: FileOrganizer 인스턴스
+        files: 분류할 파일 목록
+        llm_classifier: LLMClassifier 인스턴스
+        config: 설정
+        include_year: 연도 폴더 포함 여부
+        include_month: 월 폴더 포함 여부
+
+    Returns:
+        분류 결과 리스트
+    """
+    from src.classifier import ClassificationResult
+    from datetime import datetime
+
+    # 사용 가능한 카테고리
+    available_categories = [
+        "업무_문서", "개발_프로젝트", "재무_회계", "개인_문서",
+        "교육_학습", "미디어", "디자인", "연구_논문",
+        "법률_계약", "마케팅", "기술_문서", "기타"
+    ]
+
+    results = []
+    total = len(files)
+
+    print(f"   LLM 분류 진행 중...")
+
+    for i, file_info in enumerate(files):
+        if (i + 1) % 10 == 0 or i == 0:
+            print(f"   진행: {i + 1}/{total}")
+
+        # 파일 내용 미리보기 읽기
+        content_preview = ""
+        try:
+            ext = file_info.path.suffix.lower()
+            if ext in {'.txt', '.md', '.py', '.js', '.json', '.csv', '.log'}:
+                with open(file_info.path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content_preview = f.read(2000)
+            elif ext == '.pdf':
+                try:
+                    import PyPDF2
+                    with open(file_info.path, 'rb') as f:
+                        reader = PyPDF2.PdfReader(f)
+                        if len(reader.pages) > 0:
+                            content_preview = reader.pages[0].extract_text()[:2000]
+                except:
+                    pass
+        except:
+            pass
+
+        # LLM 분류 호출
+        llm_result = llm_classifier.classify_file(
+            filename=file_info.path.name,
+            content_preview=content_preview,
+            available_categories=available_categories
+        )
+
+        category = llm_result.get("category", "기타")
+        confidence = llm_result.get("confidence", 0.5)
+
+        # 파일 날짜 추출
+        file_date = datetime.fromtimestamp(file_info.modified_time)
+        year = file_date.year
+        month = file_date.month
+
+        result = ClassificationResult(
+            file_info=file_info,
+            category=category,
+            subcategory=None,
+            year=year if include_year else None,
+            month=month if include_month else None,
+            confidence=confidence,
+            keywords=["llm_classified"]
+        )
+
+        results.append(result)
+
+    print(f"   LLM 분류 완료: {len(results)}개 파일")
+
+    return results
+
+
 def run_organizer(
     config: OrganizerConfig,
     classify_extensions: Optional[Set[str]] = None,
     execute: bool = False,
     include_year: bool = True,
-    include_month: bool = False
+    include_month: bool = False,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None
 ):
     """
     파일 정리 실행
@@ -120,6 +207,8 @@ def run_organizer(
         execute: True면 실제 실행, False면 드라이 런
         include_year: 연도 폴더 생성
         include_month: 월 폴더 생성 (연도 하위)
+        llm_provider: LLM 제공자 (gemini-cli, gemini, claude, openai, ollama)
+        llm_model: LLM 모델 이름
     """
     if classify_extensions is None:
         classify_extensions = DEFAULT_CLASSIFY_EXTENSIONS
@@ -133,9 +222,29 @@ def run_organizer(
     print(f"드라이 런: {'아니오 (실제 실행)' if execute else '예 (미리보기)'}")
     print(f"\n제외 폴더: {len(config.excluded_dirs)}개")
     print(f"분류 대상 확장자: {len(classify_extensions)}개")
+    if llm_provider:
+        print(f"LLM 분류: {llm_provider}" + (f" ({llm_model})" if llm_model else ""))
 
     config.dry_run = not execute
     organizer = FileOrganizer(config)
+
+    # LLM 분류기 설정
+    llm_classifier = None
+    if llm_provider:
+        try:
+            from src.llm_classifier import create_llm_classifier
+            llm_classifier = create_llm_classifier(
+                provider=llm_provider,
+                model=llm_model
+            )
+            if llm_classifier.is_available():
+                print(f"   LLM 분류기 활성화됨")
+            else:
+                print(f"   LLM 분류기 사용 불가 (설정 확인 필요)")
+                llm_classifier = None
+        except Exception as e:
+            print(f"   LLM 분류기 초기화 실패: {e}")
+            llm_classifier = None
 
     try:
         # 1. 파일 스캔
@@ -179,10 +288,17 @@ def run_organizer(
         print(f"   분류 대상: {len(classify_files):,}개 (문서/이미지)")
 
         if classify_files:
-            # 중복 파일 제외를 반영하기 위해 FileOrganizer의 메서드 사용
-            classifications = organizer.classify_files(
-                classify_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
-            )
+            # LLM 분류기가 있으면 LLM 기반 분류 수행
+            if llm_classifier:
+                classifications = _classify_with_llm(
+                    organizer, classify_files, llm_classifier,
+                    config, include_year, include_month
+                )
+            else:
+                # 기존 분류 (중복 파일 제외를 반영)
+                classifications = organizer.classify_files(
+                    classify_files, by_content=True, by_date=True, exclude_duplicates=True, keep_strategy="newest"
+                )
 
             # 대상 경로 생성
             for result in classifications:

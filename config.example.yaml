@@ -27,12 +27,18 @@ excluded_patterns:
 # LLM 설정
 llm:
   enabled: false  # LLM 사용 여부
-  provider: none  # none, claude, openai, gemini, ollama
-  model: null     # 모델명 (예: claude-3-5-sonnet-20241022)
-  api_key: null   # API 키 (또는 환경변수 사용)
+  provider: none  # none, claude, openai, gemini, gemini-cli, ollama
+  model: null     # 모델명 (예: gemini-2.5-flash, claude-3-5-sonnet-20241022)
+  api_key: null   # API 키 (또는 환경변수 사용, gemini-cli는 불필요)
   max_file_size: 5242880  # 5MB
   content_preview_length: 2000
   batch_size_limit: 50
+
+# Gemini CLI 사용 예시 (gemini-cli 설치 필요: npm install -g @anthropic-ai/gemini-cli)
+# llm:
+#   enabled: true
+#   provider: gemini-cli
+#   model: gemini-2.5-flash  # 또는 gemini-2.5-pro
 
 # 분류 옵션
 classification:
