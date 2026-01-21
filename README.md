@@ -6,10 +6,11 @@
 
 1. **중복 파일 처리** - SHA256 해싱 기반 정확한 중복 탐지
 2. **버전 파일 그룹화** - 유사한 파일명(v1, v2, 최종, final 등) 그룹화
-3. **스마트 파일 분류** - 3가지 분류 모드 지원
+3. **스마트 파일 분류** - 4가지 분류 모드 지원
    - 🚀 **확장자 기반**: 빠른 정리 (대량 파일)
-   - 🤖 **LLM 자동**: 내용 분석 (50개 이하 파일)
-   - 🎯 **Claude Code**: 실시간 협업 분류 ⭐ **추천** ([가이드](./CLAUDE_CODE_MODE.md))
+   - ⭐ **Gemini CLI**: 문서 내용 기반 LLM 분류 (설정 간편) **추천**
+   - 🤖 **LLM API**: 내용 분석 (Claude, OpenAI, Gemini API)
+   - 🎯 **Claude Code**: 실시간 협업 분류 ([가이드](./CLAUDE_CODE_MODE.md))
 4. **날짜별 정리** - 연도/월별 폴더 자동 생성
 5. **빈 폴더 정리** - 파일 이동 후 남은 빈 폴더 삭제
 6. **파일 정리 미리보기** - 실행 전 파일이 어떻게 재배치될지 확인
@@ -42,6 +43,9 @@ python main.py ~/Downloads --exclude "my_project" "data" --execute
 
 # 월별 폴더까지 생성
 python main.py ~/Downloads --with-month --execute
+
+# LLM으로 문서 파일 분류 (Gemini CLI 사용) ⭐
+python main.py ~/Downloads --llm gemini-cli --execute
 ```
 
 ### GUI 사용
@@ -185,15 +189,16 @@ finally:
 | 상황 | 추천 모드 | 이유 |
 |------|-----------|------|
 | 단순히 확장자별로만 정리 | 🚀 확장자 기반 | 가장 빠름 |
-| 50개 이하 파일 자동 분류 | 🤖 LLM 자동 | 간편하고 정확함 |
-| 50개 이상 파일 분류 | 🎯 **Claude Code** | 빠르고 정확함 |
-| 복잡한 분류 규칙 필요 | 🎯 **Claude Code** | 유연한 맞춤 분류 |
-| 프로젝트별 정리 | 🎯 **Claude Code** | 컨텍스트 이해 |
+| 문서 파일 내용 기반 분류 | ⭐ **Gemini CLI** | 설정 간편, 무료 |
+| API 키 있고 정확도 중시 | 🤖 LLM API | 높은 정확도 |
+| 복잡한 분류 규칙 필요 | 🎯 Claude Code | 유연한 맞춤 분류 |
+| 프로젝트별 정리 | 🎯 Claude Code | 컨텍스트 이해 |
 
 ### 📖 자세한 가이드
 
+- **Gemini CLI 사용법**: 아래 "LLM 설정 가이드" → "Gemini CLI" 섹션 참고
 - **Claude Code 사용법**: [CLAUDE_CODE_MODE.md](./CLAUDE_CODE_MODE.md)
-- **LLM 설정**: 아래 "LLM 설정 가이드" 섹션 참고
+- **LLM API 설정**: 아래 "LLM 설정 가이드" 섹션 참고
 - **성능 최적화**: 아래 "성능 최적화 가이드" 섹션 참고
 
 ## 주의사항
@@ -209,7 +214,73 @@ finally:
 
 ### 지원하는 LLM 제공자
 
-#### 1. Claude (Anthropic)
+#### 1. Gemini CLI (추천) ⭐
+
+**가장 간단한 LLM 분류 방법** - API 키 설정 없이 바로 사용 가능
+
+##### 설치
+
+```bash
+# npm으로 설치
+npm install -g @anthropic-ai/gemini-cli
+
+# 또는 npx로 직접 실행 (설치 불필요)
+npx @anthropic-ai/gemini-cli
+```
+
+##### 첫 실행 시 인증
+
+```bash
+# 처음 실행하면 브라우저에서 Google 계정 인증
+gemini
+```
+
+##### CLI에서 사용
+
+```bash
+# 문서 파일만 LLM으로 분류 (이미지는 확장자 기반)
+python main.py ~/Downloads --llm gemini-cli --execute
+
+# 특정 모델 지정
+python main.py ~/Downloads --llm gemini-cli --llm-model gemini-2.0-flash --execute
+
+# 미리보기 (실제 실행 안함)
+python main.py ~/Downloads --llm gemini-cli
+```
+
+##### 특징
+
+- ✅ **API 키 불필요** - Google 계정 인증만으로 사용
+- ✅ **무료 사용량** 제공
+- ✅ **배치 처리** - 20개 파일씩 한 번에 처리하여 빠름
+- ✅ **문서 전용** - PDF, HWP, DOC 등 문서 파일만 LLM 분류
+- ✅ **PDF 내용 분석** - PDF 텍스트 추출 후 LLM 분류
+- ⚠️ **바이너리 문서** - HWP, DOC, DOCX는 파일명만 분류에 사용
+
+##### 지원 모델
+
+| 모델 | 설명 | 용도 |
+|------|------|------|
+| `gemini-2.0-flash` | 최신 빠른 모델 (기본값) | 일반 사용 |
+| `gemini-1.5-pro` | 고급 모델 | 복잡한 분류 |
+| `gemini-1.5-flash` | 빠른 모델 | 대량 파일 |
+
+##### 배치 처리 동작
+
+```
+문서 100개 파일 분류:
+├── PDF 파일 → 내용 추출 후 LLM 분류
+├── HWP/DOC 파일 → 파일명으로 LLM 분류
+├── TXT/MD 파일 → 내용 추출 후 LLM 분류
+└── 20개씩 배치로 LLM 호출 (총 5회 호출)
+
+이미지 파일:
+└── 확장자 기반 분류 (LLM 미사용, 빠름)
+```
+
+---
+
+#### 2. Claude (Anthropic)
 ```python
 from src.llm_classifier import LLMConfig
 
@@ -244,7 +315,7 @@ llm_config = LLMConfig(
 )
 ```
 
-#### 4. Ollama (로컬 LLM)
+#### 5. Ollama (로컬 LLM)
 ```python
 llm_config = LLMConfig(
     provider="ollama",
@@ -255,7 +326,7 @@ llm_config = LLMConfig(
 )
 ```
 
-#### 5. 키워드 기반 분류 (LLM 없이)
+#### 6. 키워드 기반 분류 (LLM 없이)
 ```python
 llm_config = LLMConfig(provider="none")
 # 또는
@@ -432,13 +503,16 @@ LLM: claude-3-5-sonnet-20241022
 
 ### LLM 제공자별 성능 비교
 
-| 제공자 | 속도 | 정확도 | 비용 | 오프라인 |
-|--------|------|--------|------|----------|
-| Claude | 빠름 | 매우 높음 | 중간 | ✗ |
-| OpenAI | 빠름 | 높음 | 중간 | ✗ |
-| Gemini | 매우 빠름 | 높음 | 낮음 | ✗ |
-| Ollama | 중간 | 중간 | 무료 | ✓ |
-| 키워드 | 매우 빠름 | 낮음 | 무료 | ✓ |
+| 제공자 | 속도 | 정확도 | 비용 | 설정 난이도 |
+|--------|------|--------|------|-------------|
+| **Gemini CLI** ⭐ | 빠름 | 높음 | 무료 | 쉬움 |
+| Claude | 빠름 | 매우 높음 | 중간 | 중간 |
+| OpenAI | 빠름 | 높음 | 중간 | 중간 |
+| Gemini API | 매우 빠름 | 높음 | 낮음 | 중간 |
+| Ollama | 중간 | 중간 | 무료 | 어려움 |
+| 키워드 | 매우 빠름 | 낮음 | 무료 | 없음 |
+
+> **추천**: 처음 사용자는 **Gemini CLI**로 시작하세요. API 키 설정 없이 바로 사용 가능합니다.
 
 ---
 
